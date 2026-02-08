@@ -55,12 +55,35 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Fonctions utilitaires
 // ─────────────────────────────────────────────
 
+// Detecter le vrai type d'image depuis les magic bytes
+function detectImageType(buffer) {
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+    return { mime: 'image/png', ext: 'png' };
+  }
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return { mime: 'image/jpeg', ext: 'jpg' };
+  }
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+    return { mime: 'image/gif', ext: 'gif' };
+  }
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+    return { mime: 'image/webp', ext: 'webp' };
+  }
+  return null;
+}
+
 // Uploader un buffer image sur Strapi
 async function uploadBufferToStrapi(buffer, filename, mimetype) {
   try {
+    // Detecter le vrai type si le mimetype est generique
+    const detected = detectImageType(buffer);
+    if (detected) {
+      mimetype = detected.mime;
+    }
+
     console.log(`  Upload buffer image: ${filename} (${mimetype})`);
 
-    const ext = mimetype.split('/')[1] || 'png';
+    const ext = detected ? detected.ext : (mimetype.split('/')[1] || 'png');
     const finalName = filename.includes('.') ? filename : `${filename}.${ext}`;
 
     const form = new FormData();
@@ -207,10 +230,10 @@ async function processImagesInContent(html) {
 // Verifier le Bearer token
 function verifyBearerToken(req, expectedToken) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return false;
-  }
-  return authHeader.substring(7) === expectedToken;
+  if (!authHeader) return false;
+  // Extraire le token apres le premier espace (tolerant aux typos comme "Baerer")
+  const token = authHeader.split(' ')[1];
+  return token === expectedToken;
 }
 
 // Creer un article dans Strapi (collection news)
@@ -280,7 +303,13 @@ app.post('/webhook/make', upload.any(), async (req, res) => {
 
     console.log(`Traitement de l'article: ${Title}`);
 
-    let content = processHtmlContent(Content);
+    // Convertir le texte brut en HTML avec paragraphes et sauts de ligne
+    let content = Content
+      .split(/\n\n+/)
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+      .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+      .join('');
 
     const { html: processedContent, images } = await processImagesInContent(content);
 
