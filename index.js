@@ -347,7 +347,9 @@ app.post('/test', async (req, res) => {
 
 app.post('/log', async (req, res) => {
   console.log(req.body)
-  return
+  return res.status(200).json({
+    success: true
+  })
 })
 
 // Demarrage du serveur
