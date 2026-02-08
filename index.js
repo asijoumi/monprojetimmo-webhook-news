@@ -3,8 +3,11 @@ const axios = require('axios');
 const FormData = require('form-data');
 const cheerio = require('cheerio');
 const slugify = require('slugify');
+const multer = require('multer');
 const { customAlphabet } = require('nanoid');
 const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 6);
+
+const upload = multer();
 
 require('dotenv').config();
 
@@ -13,8 +16,7 @@ const config = {
   port: process.env.PORT || 3001,
   strapiUrl: process.env.STRAPI_URL,
   strapiToken: process.env.STRAPI_TOKEN,
-  webhookApiKey1: process.env.WEBHOOK_API_KEY_1,
-  webhookApiKey2: process.env.WEBHOOK_API_KEY_2,
+  makeApiKey: process.env.MAKE_API_KEY,
   strapiContentType: 'news',
 };
 
@@ -52,6 +54,39 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // ─────────────────────────────────────────────
 // Fonctions utilitaires
 // ─────────────────────────────────────────────
+
+// Uploader un buffer image sur Strapi
+async function uploadBufferToStrapi(buffer, filename, mimetype) {
+  try {
+    console.log(`  Upload buffer image: ${filename} (${mimetype})`);
+
+    const ext = mimetype.split('/')[1] || 'png';
+    const finalName = filename.includes('.') ? filename : `${filename}.${ext}`;
+
+    const form = new FormData();
+    form.append('files', buffer, {
+      filename: finalName,
+      contentType: mimetype,
+    });
+
+    const uploadResponse = await axios.post(
+      `${config.strapiUrl}/api/upload`,
+      form,
+      {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${config.strapiToken}`,
+        },
+      }
+    );
+
+    console.log(`  Image uploadee: ${uploadResponse.data[0].url}`);
+    return uploadResponse.data[0];
+  } catch (error) {
+    console.error(`  Erreur upload buffer image:`, error.message);
+    return null;
+  }
+}
 
 // Télécharger une image et l'uploader sur Strapi
 async function downloadAndUploadImage(imageUrl, imageName) {
@@ -179,23 +214,17 @@ function verifyBearerToken(req, expectedToken) {
 }
 
 // Creer un article dans Strapi (collection news)
-async function createNewsInStrapi({ title, slug, processedContent, metaDescription, keywords, heroImageId }) {
+async function createNewsInStrapi({ title, slug, processedContent, heroImageId }) {
   const strapiData = {
     data: {
       title,
       slug,
       content: processedContent,
-      seo: {
-        metaTitle: title.substring(0, 60),
-        metaDescription: metaDescription || '',
-        keywords: keywords || '',
-      },
     },
   };
 
   if (heroImageId) {
     strapiData.data.cover = heroImageId;
-    strapiData.data.seo.metaImage = heroImageId;
   }
 
   const response = await axios.post(
@@ -221,66 +250,55 @@ app.get('/ping', (req, res) => {
   res.json({ status: 'ok', message: 'Webhook news endpoint is running' });
 });
 
-// Webhook generique - Provider 1
-app.post('/webhook/provider1', async (req, res) => {
+// Webhook Make.com
+app.post('/webhook/make', upload.any(), async (req, res) => {
   try {
-    console.log('\n--- Webhook recu de Provider 1 ---');
+    console.log('\n--- Webhook recu de Make.com ---');
     console.log('Body:', JSON.stringify(req.body, null, 2));
 
-    if (!verifyBearerToken(req, config.webhookApiKey1)) {
+    if (!verifyBearerToken(req, config.makeApiKey)) {
       console.log('Token invalide');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const {
-      title,
-      content_html,
-      content_markdown,
-      metaDescription,
-      keywords,
-      heroImageUrl,
-      test = false,
-    } = req.body;
+    const { Title, Content } = req.body;
 
-    if (test) {
-      console.log('Test payload recu');
-      return res.status(200).json({ message: 'Test webhook received successfully' });
+    if (!Title || !Content) {
+      console.log('Donnees manquantes (Title et Content requis)');
+      return res.status(400).json({ error: 'Missing required fields: Title and Content' });
     }
 
-    const slug = slugify(title + ' ' + nanoid(), {
+    const slug = slugify(Title + ' ' + nanoid(), {
       lower: true,
       strict: true,
       locale: 'fr',
       trim: true,
     });
 
-    if (!title || (!content_html && !content_markdown)) {
-      console.log('Donnees manquantes (title ou content requis)');
-      return res.status(400).json({ error: 'Missing required fields: title and content' });
-    }
+    console.log(`Traitement de l'article: ${Title}`);
 
-    let content = content_html || content_markdown;
-    console.log(`Traitement de l'article: ${title}`);
-
-    content = processHtmlContent(content);
+    let content = processHtmlContent(Content);
 
     const { html: processedContent, images } = await processImagesInContent(content);
 
+    // Utiliser l'image envoyee par Make.com comme cover, sinon la premiere du contenu
     let heroImageId = null;
-    if (heroImageUrl) {
-      console.log("Upload de l'image hero...");
-      const heroImage = await downloadAndUploadImage(heroImageUrl, `hero-${slug}.jpg`);
-      if (heroImage) {
-        heroImageId = heroImage.id;
+    const imageFile = req.files && req.files.find(f => f.fieldname === 'Image');
+    if (imageFile) {
+      console.log(`Upload de l'image cover depuis Make.com (${imageFile.size} bytes)`);
+      const uploaded = await uploadBufferToStrapi(imageFile.buffer, `cover-${slug}`, imageFile.mimetype);
+      if (uploaded) {
+        heroImageId = uploaded.id;
       }
+    } else if (images.length > 0) {
+      heroImageId = images[0].id;
+      console.log(`Cover extraite du contenu (ID: ${heroImageId})`);
     }
 
     const strapiResponse = await createNewsInStrapi({
-      title,
+      title: Title,
       slug,
       processedContent,
-      metaDescription,
-      keywords,
       heroImageId,
     });
 
@@ -290,7 +308,7 @@ app.post('/webhook/provider1', async (req, res) => {
       success: true,
       message: 'Actualite publiee avec succes',
       articleId: strapiResponse.data.id,
-      imagesUploaded: images.length + (heroImageId ? 1 : 0),
+      imagesUploaded: images.length,
     });
   } catch (error) {
     console.error('Erreur lors du traitement du webhook:', error.message);
@@ -345,8 +363,10 @@ app.post('/test', async (req, res) => {
   }
 });
 
-app.post('/log', async (req, res) => {
-  console.log(req.body)
+app.post('/log', upload.any(), async (req, res) => {
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Body:', req.body);
+  console.log('Files', req.files)
   return res.status(200).json({
     success: true
   })
@@ -364,7 +384,7 @@ app.listen(config.port, () => {
 ----------------------------------------------------------
   Endpoints:
   GET  http://localhost:${config.port}/ping
-  POST http://localhost:${config.port}/webhook/provider1
+  POST http://localhost:${config.port}/webhook/make
   POST http://localhost:${config.port}/test
 ==========================================================
   `);
