@@ -20,8 +20,33 @@ const config = {
 
 const app = express();
 
-// Middleware pour parser le JSON
-app.use(express.json({ limit: '50mb' }));
+// Middleware pour parser le JSON (avec nettoyage des caractères de contrôle)
+app.use(express.json({
+  limit: '50mb',
+  verify: (req, res, buf) => {
+    // Nettoyer les caractères de contrôle non échappés dans le JSON brut
+    req.rawBody = buf.toString('utf8');
+  }
+}));
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    // Tenter de nettoyer et re-parser le JSON
+    try {
+      const cleaned = req.rawBody.replace(/[\x00-\x1F\x7F]/g, (char) => {
+        if (char === '\n') return '\\n';
+        if (char === '\r') return '\\r';
+        if (char === '\t') return '\\t';
+        return '';
+      });
+      req.body = JSON.parse(cleaned);
+      next();
+    } catch (e) {
+      res.status(400).json({ error: 'Invalid JSON', message: e.message });
+    }
+  } else {
+    next(err);
+  }
+});
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // ─────────────────────────────────────────────
