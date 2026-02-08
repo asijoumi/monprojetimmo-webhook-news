@@ -279,9 +279,6 @@ app.post('/webhook/make', upload.any(), async (req, res) => {
     console.log('\n--- Webhook recu de Make.com ---');
     console.log('Body:', JSON.stringify(req.body, null, 2));
 
-    console.log(config)
-    console.log(req.headers)
-
     if (!verifyBearerToken(req, config.makeApiKey)) {
       console.log('Token invalide');
       return res.status(401).json({ error: 'Unauthorized' });
