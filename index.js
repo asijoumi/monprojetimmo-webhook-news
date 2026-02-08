@@ -303,13 +303,13 @@ app.post('/webhook/make', upload.any(), async (req, res) => {
 
     console.log(`Traitement de l'article: ${Title}`);
 
-    // Convertir le texte brut en HTML avec paragraphes et sauts de ligne
+    // Convertir le texte brut en HTML : chaque ligne = un paragraphe + br entre chaque
     let content = Content
-      .split(/\n\n+/)
-      .map(p => p.trim())
-      .filter(p => p.length > 0)
-      .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-      .join('');
+      .split(/\n/)
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      .map(l => `<p>${l}</p>`)
+      .join('<br>');
 
     const { html: processedContent, images } = await processImagesInContent(content);
 
