@@ -276,85 +276,6 @@ app.post('/webhook/provider1', async (req, res) => {
   }
 });
 
-// Webhook generique - Provider 2
-app.post('/webhook/provider2', async (req, res) => {
-  try {
-    console.log('\n--- Webhook recu de Provider 2 ---');
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-
-    if (!verifyBearerToken(req, config.webhookApiKey2)) {
-      console.log('Token invalide');
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const {
-      title,
-      content_html,
-      meta_description,
-      keywords,
-      featured_image,
-      scheduled_date,
-      test = false,
-    } = req.body;
-
-    if (test) {
-      console.log('Test payload recu');
-      return res.status(200).json({ message: 'Test webhook received successfully' });
-    }
-
-    const slug = slugify(title + ' ' + nanoid(), {
-      lower: true,
-      strict: true,
-      locale: 'fr',
-      trim: true,
-    });
-
-    if (!title || !content_html) {
-      console.log('Donnees manquantes (title ou content_html requis)');
-      return res.status(400).json({ error: 'Missing required fields: title and content_html' });
-    }
-
-    let content = content_html;
-    console.log(`Traitement de l'article: ${title}`);
-
-    content = processHtmlContent(content);
-
-    const { html: processedContent, images } = await processImagesInContent(content);
-
-    let heroImageId = null;
-    if (featured_image) {
-      console.log("Upload de l'image hero...");
-      const heroImage = await downloadAndUploadImage(featured_image, `hero-${slug}.jpg`);
-      if (heroImage) {
-        heroImageId = heroImage.id;
-      }
-    }
-
-    const strapiResponse = await createNewsInStrapi({
-      title,
-      slug,
-      processedContent,
-      metaDescription: meta_description,
-      keywords,
-      heroImageId,
-    });
-
-    console.log(`Article cree dans Strapi (ID: ${strapiResponse.data.id})`);
-
-    res.status(200).json({
-      success: true,
-      articleId: strapiResponse.data.id,
-      imagesUploaded: images.length + (heroImageId ? 1 : 0),
-    });
-  } catch (error) {
-    console.error('Erreur lors du traitement du webhook:', error.message);
-    if (error.response) {
-      console.error("Details de l'erreur:", error.response.data);
-    }
-    res.status(500).json({ error: 'Internal server error', message: error.message });
-  }
-});
-
 // Endpoint de test
 app.post('/test', async (req, res) => {
   try {
@@ -399,6 +320,11 @@ app.post('/test', async (req, res) => {
   }
 });
 
+app.post('/log', async (req, res) => {
+  console.log(req.body)
+  return
+})
+
 // Demarrage du serveur
 app.listen(config.port, () => {
   console.log(`
@@ -412,7 +338,6 @@ app.listen(config.port, () => {
   Endpoints:
   GET  http://localhost:${config.port}/ping
   POST http://localhost:${config.port}/webhook/provider1
-  POST http://localhost:${config.port}/webhook/provider2
   POST http://localhost:${config.port}/test
 ==========================================================
   `);
