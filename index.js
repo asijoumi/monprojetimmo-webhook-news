@@ -309,7 +309,7 @@ app.post('/webhook/make', upload.any(), async (req, res) => {
       .map(l => l.trim())
       .filter(l => l.length > 0)
       .map(l => `<p>${l}</p>`)
-      .join('<br>');
+      .join('');
 
     const { html: processedContent, images } = await processImagesInContent(content);
 
